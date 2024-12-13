@@ -70,8 +70,14 @@ CITY_COORDINATES = {
 # Add root endpoint
 @app.route('/')
 def home():
-    """Serve the API documentation page."""
-    return render_template_string(HOME_PAGE)
+    return jsonify({
+        "status": "running",
+        "message": "Crisis Center API is operational",
+        "endpoints": {
+            "find_nearest": "/find-nearest?city=<city_name>",
+            "health": "/health"
+        }
+    })
 
 # Your existing haversine_distance function here...
 
@@ -113,9 +119,9 @@ def center_details(region):
         
     return jsonify(center)
 
+# Your existing find-nearest endpoint
 @app.route('/find-nearest', methods=['GET'])
 def find_nearest_center():
-    """Find the nearest crisis center for a given city."""
     city = request.args.get('city', '')
     if not city:
         return jsonify({
@@ -155,13 +161,11 @@ def find_nearest_center():
         "national_crisis_line": "09 25250111"
     })
 
-# Add health check endpoint
+# Add a health check endpoint
 @app.route('/health')
 def health_check():
-    """Simple health check endpoint."""
     return jsonify({
         "status": "healthy",
-        "service": "crisis-center-api",
         "version": "1.0.0"
     })
 
