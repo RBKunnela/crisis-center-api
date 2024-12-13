@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 import math
+import logging
 
 app = Flask(__name__)
 CORS(app)
@@ -163,6 +164,17 @@ def health_check():
         "service": "crisis-center-api",
         "version": "1.0.0"
     })
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+CORS(app)
+
+# Add startup logging
+logger.info("Starting Crisis Center API application...")
+logger.info("Configuring routes...")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
