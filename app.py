@@ -3,8 +3,18 @@ from flask_cors import CORS
 import math
 import logging
 
+# Start with logging configuration
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+# Create Flask app only once
 app = Flask(__name__)
 CORS(app)
+
+# Log startup
+logger.info("Starting Crisis Center API application...")
+logger.info("Configuring routes...")
+
 
 # HTML template for the root endpoint
 HOME_PAGE = '''
@@ -67,19 +77,38 @@ CITY_COORDINATES = {
     # ... rest of your cities ...
 }
 
-# Add root endpoint
 @app.route('/')
 def home():
-    return jsonify({
-        "status": "running",
-        "message": "Crisis Center API is operational",
-        "endpoints": {
-            "find_nearest": "/find-nearest?city=<city_name>",
-            "health": "/health"
-        }
-    })
+    logger.info("Root endpoint accessed")
+    return render_template_string(HOME_PAGE)
 
 # Your existing haversine_distance function here...
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Calculate the great circle distance between two points on Earth.
+    Uses the Haversine formula to compute the distance in kilometers.
+    
+    Parameters:
+        lat1, lon1: Latitude and longitude of first point in degrees
+        lat2, lon2: Latitude and longitude of second point in degrees
+        
+    Returns:
+        Distance between points in kilometers
+    """
+    R = 6371  # Earth's radius in kilometers
+    
+    # Convert latitude and longitude to radians
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+    
+    # Haversine formula components
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    
+    a = (math.sin(dlat/2)**2 + 
+         math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    
+    return R * c
 
 @app.route('/centers', methods=['GET'])
 def list_centers():
@@ -168,17 +197,6 @@ def health_check():
         "status": "healthy",
         "version": "1.0.0"
     })
-
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
-app = Flask(__name__)
-CORS(app)
-
-# Add startup logging
-logger.info("Starting Crisis Center API application...")
-logger.info("Configuring routes...")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
