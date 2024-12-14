@@ -6,11 +6,35 @@ import math
 import logging
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, date
 
 # Configure logging for better debugging and monitoring
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+# Placeholder functions for validation
+def is_valid_finnish_phone(phone: str) -> bool:
+    """Basic phone number validation for Finnish numbers."""
+    # Remove spaces and hyphens
+    cleaned_phone = phone.replace(' ', '').replace('-', '')
+    
+    # Check if it contains only digits and has a reasonable length
+    return len(cleaned_phone) >= 9 and cleaned_phone.isdigit()
+
+def is_within_finland(lat: float, lon: float) -> bool:
+    """Check if coordinates are within Finland's approximate boundaries."""
+    return (59.0 <= lat <= 70.0) and (20.0 <= lon <= 32.0)
+
+def get_day_range(start_day: str, end_day: str) -> List[str]:
+    """Generate a list of days between start and end."""
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    start_index = days.index(start_day)
+    end_index = days.index(end_day)
+    
+    if start_index <= end_index:
+        return days[start_index:end_index+1]
+    else:
+        return days[start_index:] + days[:end_index+1]
 
 # Initialize Google Maps client with API key from environment variable
 GOOGLE_MAPS_API_KEY = os.environ.get('GOOGLE_MAPS_API_KEY')
@@ -366,6 +390,44 @@ def handle_api_error(func):
             }), 500
     return wrapper
 
+def validate_finnish_city(city: str) -> bool:
+    """
+    Validate if the input is a potentially valid Finnish city.
+    
+    Args:
+        city (str): City name to validate
+    
+    Returns:
+        bool: True if city seems valid, False otherwise
+    """
+    # List of known Finnish cities and regions
+    FINNISH_CITIES = {
+        'helsinki', 'espoo', 'tampere', 'vantaa', 'oulu', 
+        'turku', 'jyväskylä', 'lahti', 'kuopio', 'pori', 
+        'helsinki', 'rovaniemi', 'joensuu', 'vaasa'
+    }
+    
+    # Basic validation checks
+    if not city:
+        return False
+    
+    # Remove whitespace and convert to lowercase
+    normalized_city = city.strip().lower()
+    
+    # Check against known cities
+    if normalized_city in FINNISH_CITIES:
+        return True
+    
+    # Additional checks
+    if len(normalized_city) < 2:  # Too short
+        return False
+    
+    if normalized_city.isdigit():  # Purely numeric
+        return False
+    
+    # Optional: Add more sophisticated checks like regex for valid city name patterns
+    return True
+
 @app.route('/')
 def home():
     """Serve the API documentation page."""
@@ -374,29 +436,28 @@ def home():
 
 @app.route('/find-nearest', methods=['GET'])
 def find_nearest_center():
-    """Enhanced crisis center finder with travel times and alternatives."""
-    city = request.args.get('city', '')
-    if not city:
+    city = request.args.get('city', '').strip()
+    
+    if not validate_finnish_city(city):
         return jsonify({
-            "error": "City parameter is required"
+            "error": "Invalid city input. Please provide a valid Finnish city.",
+            "emergency_contacts": {
+                "national_crisis_line": "09 25250111",
+                "emergency_number": "112"
+            }
         }), 400
     
-    coordinates = None
-    if gmaps:
-        try:
-            coordinates = get_city_coordinates(city)
-            if coordinates:
-                logger.info(f"Successfully geocoded {city}")
-        except Exception as e:
-            logger.error(f"Geocoding failed for {city}: {str(e)}")
-    
+    # Fetch updated crisis center list
+    global CRISIS_CENTERS
+    CRISIS_CENTERS = fetch_crisis_centers()
+
+    coordinates = get_city_coordinates(city) if gmaps else None
     if coordinates:
         user_lat, user_lon = coordinates
     else:
-        user_lat, user_lon = 62.2426, 25.7475
+        user_lat, user_lon = 62.2426, 25.7475  # Fallback location
         logger.warning(f"Using fallback coordinates for {city}")
     
-    # Find nearest center
     nearest_center = min(
         CRISIS_CENTERS,
         key=lambda center: haversine_distance(
@@ -405,7 +466,6 @@ def find_nearest_center():
         )
     )
     
-    # Calculate distances and get travel info
     distance = haversine_distance(
         user_lat, user_lon,
         nearest_center['latitude'], nearest_center['longitude']
@@ -416,10 +476,8 @@ def find_nearest_center():
         nearest_center['latitude'], nearest_center['longitude']
     )
     
-    # Find alternative centers
     alternatives = find_alternative_centers(user_lat, user_lon, nearest_center)
     
-    # Get current time
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     return jsonify({
@@ -456,10 +514,6 @@ def find_nearest_center():
         "emergency_contacts": {
             "national_crisis_line": "09 25250111",
             "emergency_number": "112"
-        },
-        "additional_info": {
-            "24/7_services": ["National Crisis Line", "Emergency Number"],
-            "languages": ["Finnish", "Swedish", "English"]
         }
     })
 
