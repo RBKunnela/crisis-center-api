@@ -121,6 +121,18 @@ HOME_PAGE = '''
 </body>
 </html>
 '''
+def fetch_crisis_centers() -> List[Dict]:
+    """Fetch crisis centers from an external API."""
+    external_api_url = "https://example.com/api/crisis-centers"  # Replace with real API URL
+    try:
+        response = requests.get(external_api_url, timeout=5)
+        response.raise_for_status()
+        centers = response.json()
+        logger.info("Successfully fetched crisis center data from the internet")
+        return centers
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch crisis center data: {str(e)}")
+        return []
 
 def verify_crisis_center_data(center_id: str, new_data: dict) -> bool:
     """
@@ -447,17 +459,22 @@ def find_nearest_center():
             }
         }), 400
     
-    # Fetch updated crisis center list
-    global CRISIS_CENTERS
-    CRISIS_CENTERS = fetch_crisis_centers()
-
-    coordinates = get_city_coordinates(city) if gmaps else None
+    coordinates = None
+    if gmaps:
+        try:
+            coordinates = get_city_coordinates(city)
+            if coordinates:
+                logger.info(f"Successfully geocoded {city}")
+        except Exception as e:
+            logger.error(f"Geocoding failed for {city}: {str(e)}")
+    
     if coordinates:
         user_lat, user_lon = coordinates
     else:
-        user_lat, user_lon = 62.2426, 25.7475  # Fallback location
+        user_lat, user_lon = 62.2426, 25.7475
         logger.warning(f"Using fallback coordinates for {city}")
     
+    # Find nearest center
     nearest_center = min(
         CRISIS_CENTERS,
         key=lambda center: haversine_distance(
@@ -466,6 +483,7 @@ def find_nearest_center():
         )
     )
     
+    # Calculate distances and get travel info
     distance = haversine_distance(
         user_lat, user_lon,
         nearest_center['latitude'], nearest_center['longitude']
@@ -476,8 +494,10 @@ def find_nearest_center():
         nearest_center['latitude'], nearest_center['longitude']
     )
     
+    # Find alternative centers
     alternatives = find_alternative_centers(user_lat, user_lon, nearest_center)
     
+    # Get current time
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     return jsonify({
@@ -514,6 +534,10 @@ def find_nearest_center():
         "emergency_contacts": {
             "national_crisis_line": "09 25250111",
             "emergency_number": "112"
+        },
+        "additional_info": {
+            "24/7_services": ["National Crisis Line", "Emergency Number"],
+            "languages": ["Finnish", "Swedish", "English"]
         }
     })
 
