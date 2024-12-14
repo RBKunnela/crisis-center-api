@@ -1,13 +1,29 @@
+# Required imports
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
+import googlemaps
+from typing import Tuple, Optional
 import math
 import logging
+import os
 
-# Start with logging configuration
+# Configure logging to help debug any issues
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Create Flask app only once
+# Initialize Google Maps client with API key from environment variable
+GOOGLE_MAPS_API_KEY = os.environ.get('GOOGLE_MAPS_API_KEY')
+if not GOOGLE_MAPS_API_KEY:
+    logger.warning("Google Maps API key not found in environment variables")
+
+try:
+    gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY)
+    logger.info("Successfully initialized Google Maps client")
+except Exception as e:
+    logger.error(f"Failed to initialize Google Maps client: {str(e)}")
+    gmaps = None
+
+# Create Flask app instance
 app = Flask(__name__)
 CORS(app)
 
@@ -15,8 +31,7 @@ CORS(app)
 logger.info("Starting Crisis Center API application...")
 logger.info("Configuring routes...")
 
-
-# HTML template for the root endpoint
+# HTML template for the root endpoint - provides API documentation
 HOME_PAGE = '''
 <!DOCTYPE html>
 <html>
@@ -50,7 +65,8 @@ HOME_PAGE = '''
     "region": "Helsinki",
     "phone": "09 4135 0510",
     "distance": 0.0,
-    "national_crisis_line": "09 25250111"
+    "national_crisis_line": "09 25250111",
+    "coordinates_source": "google_maps"
 }
     </pre>
 
@@ -60,7 +76,7 @@ HOME_PAGE = '''
 </html>
 '''
 
-# Your existing crisis centers and city coordinates data here...
+# Database of crisis centers with their coordinates
 CRISIS_CENTERS = [
     {
         "region": "Helsinki",
@@ -69,38 +85,77 @@ CRISIS_CENTERS = [
         "latitude": 60.1699,
         "longitude": 24.9384
     },
-    # ... rest of your centers ...
+    {
+        "region": "Jyväskylä",
+        "name": "Jyväskylän kriisikeskus Mobile",
+        "phone": "044 7888 470",
+        "latitude": 62.2426,
+        "longitude": 25.7475
+    },
+    {
+        "region": "Kuopio",
+        "name": "Kuopion kriisikeskus",
+        "phone": "017 262 7733",
+        "latitude": 62.8924,
+        "longitude": 27.6782
+    },
+    {
+        "region": "Oulu",
+        "name": "Oulun kriisikeskus",
+        "phone": "044 3690 500",
+        "latitude": 65.0121,
+        "longitude": 25.4651
+    },
+    {
+        "region": "Rovaniemi",
+        "name": "Rovaniemen kriisikeskus",
+        "phone": "040 553 7508",
+        "latitude": 66.5039,
+        "longitude": 25.7294
+    }
 ]
 
-CITY_COORDINATES = {
-    "Helsinki": (60.1699, 24.9384),
-    # ... rest of your cities ...
-}
-
-@app.route('/')
-def home():
-    logger.info("Root endpoint accessed")
-    return render_template_string(HOME_PAGE)
-
-# Your existing haversine_distance function here...
-def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+def get_city_coordinates(city: str) -> Optional[Tuple[float, float]]:
     """
-    Calculate the great circle distance between two points on Earth.
-    Uses the Haversine formula to compute the distance in kilometers.
-    
-    Parameters:
-        lat1, lon1: Latitude and longitude of first point in degrees
-        lat2, lon2: Latitude and longitude of second point in degrees
+    Get the coordinates of a city using Google Maps Geocoding API.
+    Returns tuple of (latitude, longitude) if found, None if not found or not in Finland.
+    """
+    if not gmaps:
+        logger.warning("Google Maps client not initialized, cannot get coordinates")
+        return None
+
+    try:
+        # Add 'Finland' to ensure we get Finnish cities
+        search_query = f"{city}, Finland"
+        result = gmaps.geocode(search_query)
         
-    Returns:
-        Distance between points in kilometers
-    """
+        if not result:
+            logger.warning(f"No results found for {city}")
+            return None
+            
+        location = result[0]['geometry']['location']
+        
+        # Verify the result is in Finland
+        address_components = result[0]['address_components']
+        country = next((comp['short_name'] for comp in address_components 
+                       if 'country' in comp['types']), None)
+                       
+        if country != 'FI':
+            logger.warning(f"Result for {city} was not in Finland")
+            return None
+            
+        return (location['lat'], location['lng'])
+        
+    except Exception as e:
+        logger.error(f"Error getting coordinates for {city}: {str(e)}")
+        return None
+
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculate the great circle distance between two points on Earth."""
     R = 6371  # Earth's radius in kilometers
     
-    # Convert latitude and longitude to radians
     lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
     
-    # Haversine formula components
     dlat = lat2 - lat1
     dlon = lon2 - lon1
     
@@ -110,63 +165,38 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     
     return R * c
 
-@app.route('/centers', methods=['GET'])
-def list_centers():
-    """Return a list of all crisis centers."""
-    return jsonify({
-        "centers": CRISIS_CENTERS,
-        "total": len(CRISIS_CENTERS)
-    })
+@app.route('/')
+def home():
+    """Serve the API documentation page."""
+    logger.info("Root endpoint accessed")
+    return render_template_string(HOME_PAGE)
 
-@app.route('/centers/search', methods=['GET'])
-def search_centers():
-    """Search crisis centers by region."""
-    region = request.args.get('region', '').capitalize()
-    if not region:
-        return jsonify({"error": "Region parameter is required"}), 400
-        
-    matching_centers = [
-        center for center in CRISIS_CENTERS 
-        if region in center['region']
-    ]
-    
-    return jsonify({
-        "centers": matching_centers,
-        "count": len(matching_centers)
-    })
-    
-@app.route('/centers/<region>', methods=['GET'])
-def center_details(region):
-    """Get detailed information about a specific center."""
-    center = next(
-        (c for c in CRISIS_CENTERS if c['region'].lower() == region.lower()),
-        None
-    )
-    
-    if not center:
-        return jsonify({"error": "Center not found"}), 404
-        
-    return jsonify(center)
-
-# Your existing find-nearest endpoint
 @app.route('/find-nearest', methods=['GET'])
 def find_nearest_center():
+    """Find the nearest crisis center to a given city."""
     city = request.args.get('city', '')
     if not city:
         return jsonify({
             "error": "City parameter is required"
         }), 400
     
-    # Normalize city name
-    city = city.capitalize()
+    # Try to get coordinates from Google Maps
+    coordinates = None
+    if gmaps:
+        try:
+            coordinates = get_city_coordinates(city)
+            if coordinates:
+                logger.info(f"Successfully geocoded {city}")
+        except Exception as e:
+            logger.error(f"Geocoding failed for {city}: {str(e)}")
     
-    # Get city coordinates
-    if city in CITY_COORDINATES:
-        user_lat, user_lon = CITY_COORDINATES[city]
+    if coordinates:
+        user_lat, user_lon = coordinates
     else:
-        # Default to center of Finland if city not found
+        # Fall back to center of Finland if geocoding fails
         user_lat, user_lon = 62.2426, 25.7475
-        
+        logger.warning(f"Using fallback coordinates for {city}")
+    
     # Find nearest crisis center
     nearest_center = min(
         CRISIS_CENTERS,
@@ -187,15 +217,17 @@ def find_nearest_center():
         "region": nearest_center['region'],
         "phone": nearest_center['phone'],
         "distance": round(distance, 2),
-        "national_crisis_line": "09 25250111"
+        "national_crisis_line": "09 25250111",
+        "coordinates_source": "google_maps" if coordinates else "fallback"
     })
 
-# Add a health check endpoint
 @app.route('/health')
 def health_check():
+    """Health check endpoint for monitoring."""
     return jsonify({
         "status": "healthy",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "google_maps_available": gmaps is not None
     })
 
 if __name__ == '__main__':
